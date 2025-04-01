@@ -1,0 +1,16 @@
+name: EHDUFO
+channels:
+  - ngsolve
+  - conda-forge
+  - default
+dependencies:
+  - numpy
+  - numba
+  - scipy
+  - jupyter
+  - ipykernel
+  - matplotlib
+  - pip
+  - pip:
+    - ngsolve
+    - webgui_jupyter_widgets
