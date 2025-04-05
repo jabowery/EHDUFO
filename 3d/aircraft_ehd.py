@@ -46,38 +46,54 @@ class EHDAircraft(GeometricObject):
             EI(bc="inner_insulator"),
             PI(maxh=0.1),
         ], mat="insulator")
-        
-        geo = CSG2d()
-        geo.Add(rhombus)
-        return geo
 
-    def apply_boundary_conditions(self, domain):
-        """Apply boundary conditions for this aircraft."""
-        # Add our boundaries to the domain
-        if self.emitter_electrode:
+        return rhombus
+#        geo = CSG2d()
+#        geo.Add(rhombus)
+#        return geo
+    if False:
+        def apply_boundary_conditions(self, domain):
+            """Apply boundary conditions for this aircraft."""
+            # Add our boundaries to the domain
+            if self.emitter_electrode:
+                domain.dirichlet_boundaries.update({
+                    'emitter': {'volts': self.emitter_electrode.voltage}
+                })
+            
+            if self.collector_electrode:
+                domain.dirichlet_boundaries.update({
+                    'collector': {'volts': self.collector_electrode.voltage}
+                })
+            
+            # Also add insulator boundaries if needed (with no voltage)
             domain.dirichlet_boundaries.update({
-                'emitter': {'volts': self.emitter_electrode.voltage}
+                'inner_insulator': {'no_flow': True},
+                'outer_insulator': {'no_flow': True}
             })
-        
-        if self.collector_electrode:
-            domain.dirichlet_boundaries.update({
-                'collector': {'volts': self.collector_electrode.voltage}
-            })
-        
-        # Also add insulator boundaries if needed (with no voltage)
-        domain.dirichlet_boundaries.update({
-            'inner_insulator': {'no_flow': True},
-            'outer_insulator': {'no_flow': True}
-        })
+    else:
+        def apply_boundary_conditions(self, domain):
+            """Apply boundary conditions for this aircraft."""
+            # Let electrodes apply their boundary conditions directly
+            if self.emitter_electrode:
+                self.emitter_electrode.set_dirichlet_bc(domain.phi_pot_gf)
+                print(f"Setting emitter boundary to {self.emitter_electrode.voltage:.2f}V")
+
+            if self.collector_electrode:
+                self.collector_electrode.set_dirichlet_bc(domain.phi_pot_gf)
+                print(f"Setting collector boundary to {self.collector_electrode.voltage:.2f}V")
 
     def on_mesh_generated(self, domain):
         """Called when the domain generates a mesh with this aircraft."""
+        print('In aircraft.on_mesh_generated')
         # Inform electrodes about the mesh and FES
         if self.emitter_electrode:
+            print("Calling on_mesh_generated for emitter electrode")
             self.emitter_electrode.on_mesh_generated(domain)
         
         if self.collector_electrode:
+            print("Calling on_mesh_generated for collector electrode")
             self.collector_electrode.on_mesh_generated(domain)
+
 
     def create_geometry(self):
         """

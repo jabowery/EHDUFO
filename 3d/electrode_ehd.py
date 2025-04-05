@@ -388,47 +388,69 @@ class Electrode(GeometricObject):
         return collected_charge
 
     def set_dirichlet_bc(self, phi_pot_gf):
-        """Apply voltage boundary condition to potential field.
-        The phi_pot_gf knows its FES, so we don't need to pass it separately.
-        """
-        if not self.boundary_dofs:
-            raise ValueError(f"Electrode {self.name} not connected to a mesh")
-
-        # Directly set DOF values
-        for dof in self.boundary_dofs:
+        """Apply voltage boundary condition to potential field."""
+        if not hasattr(self, 'pot_boundary_dofs') or not self.pot_boundary_dofs:
+            print(f"Warning: Electrode {self.name} doesn't have boundary DOFs set up")
+            return
+            
+        # Set the voltage on all DOFs associated with this electrode's boundary
+        for dof in self.pot_boundary_dofs:
             phi_pot_gf.vec[dof] = self._voltage
+        
+        # Also try setting directly using the boundary name
+        try:
+            phi_pot_gf.Set(self._voltage, definedon=self.mesh.Boundaries(self.name))
+            print(f"Applied {self._voltage:.2f}V to boundary '{self.name}' using Set method")
+        except Exception as e:
+            print(f"Could not apply boundary condition using Set method: {e}")
+
+    def apply_boundary_conditions(self, domain):
+        """Apply boundary conditions for this aircraft."""
+        # Let electrodes apply their boundary conditions
+        if self.emitter_electrode:
+            domain.dirichlet_boundaries.update({
+                'emitter': {'volts': self.emitter_electrode.voltage}
+            })
+        
+        if self.collector_electrode:
+            domain.dirichlet_boundaries.update({
+                'collector': {'volts': self.collector_electrode.voltage}
+        })
 
     def on_mesh_generated(self, domain):
-        """Called when a mesh containing this electrode is generated.
-        Binds the electrode to all relevant domain fields.
-        """
+        """Called when a mesh containing this electrode is generated."""
+        print(f"Electrode {self.name}: on_mesh_generated called")
         self.mesh = domain.mesh
         self.domain = domain
         
         # Store references to all relevant finite element spaces
-        self.fes_pot = domain.fes_pot   # For potential field
-        self.fes_rho = domain.fes_rho   # For charge density
-        self.fes_vel = domain.fes_vel   # For velocity field
+        self.fes_pot = domain.fes_pot
+        self.fes_rho = domain.fes_rho
+        self.fes_vel = domain.fes_vel
         
-        # Find all DOFs on this electrode's boundary for each field
-        # Potential DOFs (for Dirichlet BC)
+        # Find all DOFs on this electrode's boundary
         self.pot_boundary_dofs = set()
-        # Charge DOFs (for emission/collection)
         self.rho_boundary_dofs = set()
         
         boundaries = self.mesh.GetBoundaries()
+        print(f"Electrode {self.name}: Searching for boundary DOFs among {len(boundaries)} boundaries")
         for i in range(len(boundaries)):
             bn = boundaries[i]
             if bn == self.name:
+                print(f"Electrode {self.name}: Found matching boundary at index {i}")
                 # Get potential DOFs
-                for dof in self.fes_pot.GetDofNrs(ElementId(BND, i)):
+                pot_dofs = self.fes_pot.GetDofNrs(ElementId(BND, i))
+                print(f"Electrode {self.name}: Found {len(pot_dofs)} potential DOFs")
+                for dof in pot_dofs:
                     self.pot_boundary_dofs.add(dof)
                 
                 # Get charge density DOFs
-                for dof in self.fes_rho.GetDofNrs(ElementId(BND, i)):
+                rho_dofs = self.fes_rho.GetDofNrs(ElementId(BND, i))
+                print(f"Electrode {self.name}: Found {len(rho_dofs)} charge density DOFs")
+                for dof in rho_dofs:
                     self.rho_boundary_dofs.add(dof)
         
-        # Calculate electrode geometry properties based on mesh
+        # Calculate electrode geometry properties
         self.length = self._calculate_total_length()
         self.area = self._calculate_approximate_area()
         

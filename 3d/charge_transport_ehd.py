@@ -98,119 +98,173 @@ def solve_charge_transport(rho_current, mesh, fes_rho, dt, ion_mobility, E_field
             rho_new.vec[i] = min_ion_density
     
     return rho_new
-
-def solve_poisson_equation(mesh, fes_pot, rho_charge, epsilon, emitter_voltage=None, collector_voltage=None):
-    """
-    Solve Poisson's equation for the electric potential with improved boundary condition handling.
-    
-    Args:
-        mesh: The computational mesh
-        fes_pot: Finite element space for potential
-        rho_charge: Charge density GridFunction
-        epsilon: Permittivity CoefficientFunction
-        emitter_voltage: Optional voltage value for emitter (for boundary verification)
-        collector_voltage: Optional voltage value for collector (for boundary verification)
+if False:
+    def solve_poisson_equation(mesh, fes_pot, rho_charge, epsilon, emitter_voltage=None, collector_voltage=None):
+        """
+        Solve Poisson's equation for the electric potential with improved boundary condition handling.
         
-    Returns:
-        Updated potential GridFunction
-    """
-    # Trial and test functions
-    phi_pot, v_phi_pot = fes_pot.TnT()
-    
-    # Create potential GridFunction
-    phi_pot_gf = GridFunction(fes_pot)
-    
-    # Make sure we preserve any existing boundary conditions
-    # This ensures Dirichlet values are maintained when we start the solve
-    if hasattr(fes_pot, 'dirichlet_dofs'):
-        for dof in fes_pot.dirichlet_dofs:
-            phi_pot_gf.vec[dof] = fes_pot.dirichlet_values[dof]
-    
-    # Bilinear form (left-hand side)
-    a_pot = BilinearForm(fes_pot)
-    a_pot += epsilon * grad(phi_pot) * grad(v_phi_pot) * dx
-    
-    # Linear form (right-hand side) - source term from charge density
-    L_pot = LinearForm(fes_pot)
-    L_pot += rho_charge * v_phi_pot * dx
-    
-    # Assemble the system
-    a_pot.Assemble()
-    L_pot.Assemble()
-    
-    # Create a residual vector for the update
-    r = L_pot.vec.CreateVector()
-    r.data = L_pot.vec - a_pot.mat * phi_pot_gf.vec
-    
-    # Update the potential while respecting Dirichlet boundary conditions
-    phi_pot_gf.vec.data += a_pot.mat.Inverse(fes_pot.FreeDofs()) * r
-    
-    # Verify boundary conditions are preserved
-    bc_error = False
-    boundary_values = {
-        "emitter": emitter_voltage,
-        "collector": collector_voltage,
-        "right": 0.0
-    }
-    
-    for i, bn in enumerate(mesh.GetBoundaries()):
-        if bn in boundary_values and boundary_values[bn] is not None:
-            # Sample a point on this boundary to check value
-            el = mesh[ElementId(BND, i)]
-            vertices = []
-            for v in el.vertices:
-                vertex = mesh[v]
-                vertices.append((vertex.point[0], vertex.point[1]))
+        Args:
+            mesh: The computational mesh
+            fes_pot: Finite element space for potential
+            rho_charge: Charge density GridFunction
+            epsilon: Permittivity CoefficientFunction
+            emitter_voltage: Optional voltage value for emitter (for boundary verification)
+            collector_voltage: Optional voltage value for collector (for boundary verification)
             
-            if len(vertices) >= 1:
-                r = vertices[0][0]
-                z = vertices[0][1]
-                # Sample potential at this boundary point
-                try:
-                    mesh_point = mesh(r, z)
-                    value = phi_pot_gf(mesh_point)
-                    expected_value = boundary_values[bn]
-                    
-                    if abs(value - expected_value) > 1e-6:
-                        print(f"Warning: Boundary {bn} has value {value:.2f}V instead of expected {expected_value:.2f}V")
-                        bc_error = True
-                        
-                        # Check the actual DOF values for this boundary element
-                        dofs = fes_pot.GetDofNrs(ElementId(BND, i))
-                        if len(dofs) > 0:
-                            dof_values = [phi_pot_gf.vec[dof] for dof in dofs]
-                            print(f"  DOF values at boundary: {dof_values}")
-                except Exception as e:
-                    print(f"Could not sample boundary {bn}: {e}")
-    
-    if bc_error:
-        print("Attempting to restore boundary conditions...")
-        # Force boundary condition compliance
-        for bn in boundary_values:
-            if boundary_values[bn] is not None and bn in mesh.GetBoundaries():
-                value = boundary_values[bn]
-                phi_pot_gf.Set(value, definedon=mesh.Boundaries(bn))
-                print(f"Re-applied {value:.2f}V to boundary {bn}")
+        Returns:
+            Updated potential GridFunction
+        """
+        # Trial and test functions
+        phi_pot, v_phi_pot = fes_pot.TnT()
         
-        # Additional verification after correction
-        print("Checking boundary conditions after restoration:")
-        for bn in boundary_values:
-            if boundary_values[bn] is not None and bn in mesh.GetBoundaries():
-                for i in range(mesh.nface):
-                    if mesh.GetBoundaries()[i] == bn:
-                        el = mesh[ElementId(BND, i)]
-                        if len(el.vertices) >= 1:
+        # Create potential GridFunction
+        phi_pot_gf = GridFunction(fes_pot)
+        
+        # Make sure we preserve any existing boundary conditions
+        # This ensures Dirichlet values are maintained when we start the solve
+        if hasattr(fes_pot, 'dirichlet_dofs'):
+            for dof in fes_pot.dirichlet_dofs:
+                phi_pot_gf.vec[dof] = fes_pot.dirichlet_values[dof]
+        
+        # Bilinear form (left-hand side)
+        a_pot = BilinearForm(fes_pot)
+        a_pot += epsilon * grad(phi_pot) * grad(v_phi_pot) * dx
+        
+        # Linear form (right-hand side) - source term from charge density
+        L_pot = LinearForm(fes_pot)
+        L_pot += rho_charge * v_phi_pot * dx
+        
+        # Assemble the system
+        a_pot.Assemble()
+        L_pot.Assemble()
+        
+        # Create a residual vector for the update
+        r = L_pot.vec.CreateVector()
+        r.data = L_pot.vec - a_pot.mat * phi_pot_gf.vec
+        
+        # Update the potential while respecting Dirichlet boundary conditions
+        phi_pot_gf.vec.data += a_pot.mat.Inverse(fes_pot.FreeDofs()) * r
+        
+        # Verify boundary conditions are preserved
+        bc_error = False
+        boundary_values = {
+            "emitter": emitter_voltage,
+            "collector": collector_voltage,
+            "right": 0.0
+        }
+        
+        for i, bn in enumerate(mesh.GetBoundaries()):
+            if bn in boundary_values and boundary_values[bn] is not None:
+                # Sample a point on this boundary to check value
+                el = mesh[ElementId(BND, i)]
+                vertices = []
+                for v in el.vertices:
+                    vertex = mesh[v]
+                    vertices.append((vertex.point[0], vertex.point[1]))
+                
+                if len(vertices) >= 1:
+                    r = vertices[0][0]
+                    z = vertices[0][1]
+                    # Sample potential at this boundary point
+                    try:
+                        mesh_point = mesh(r, z)
+                        value = phi_pot_gf(mesh_point)
+                        expected_value = boundary_values[bn]
+                        
+                        if abs(value - expected_value) > 1e-6:
+                            print(f"Warning: Boundary {bn} has value {value:.2f}V instead of expected {expected_value:.2f}V")
+                            bc_error = True
+                            
+                            # Check the actual DOF values for this boundary element
+                            dofs = fes_pot.GetDofNrs(ElementId(BND, i))
+                            if len(dofs) > 0:
+                                dof_values = [phi_pot_gf.vec[dof] for dof in dofs]
+                                print(f"  DOF values at boundary: {dof_values}")
+                    except Exception as e:
+                        print(f"Could not sample boundary {bn}: {e}")
+        
+        if bc_error:
+            print("Attempting to restore boundary conditions...")
+            # Force boundary condition compliance
+            for bn in boundary_values:
+                if boundary_values[bn] is not None and bn in mesh.GetBoundaries():
+                    value = boundary_values[bn]
+                    phi_pot_gf.Set(value, definedon=mesh.Boundaries(bn))
+                    print(f"Re-applied {value:.2f}V to boundary {bn}")
+            
+            # Additional verification after correction
+            print("Checking boundary conditions after restoration:")
+            for bn in boundary_values:
+                if boundary_values[bn] is not None and bn in mesh.GetBoundaries():
+                    for i in range(mesh.nface):
+                        if mesh.GetBoundaries()[i] == bn:
+                            el = mesh[ElementId(BND, i)]
+                            if len(el.vertices) >= 1:
+                                vertex = mesh[el.vertices[0]]
+                                r, z = vertex.point[0], vertex.point[1]
+                                try:
+                                    mesh_point = mesh(r, z)
+                                    value = phi_pot_gf(mesh_point)
+                                    print(f"  Boundary {bn}: {value:.2f}V (expected {boundary_values[bn]:.2f}V)")
+                                    break
+                                except Exception as e:
+                                    print(f"  Could not verify boundary {bn}: {e}")
+        
+        return phi_pot_gf
+else:
+    def solve_poisson_equation(mesh, fes_pot, rho_charge, epsilon, emitter_voltage=None, collector_voltage=None):
+        """
+        Solve Poisson's equation for the electric potential with improved boundary condition handling.
+        """
+        # Trial and test functions
+        phi_pot, v_phi_pot = fes_pot.TnT()
+        
+        # Create potential GridFunction
+        phi_pot_gf = GridFunction(fes_pot)
+        
+        # Bilinear form (left-hand side)
+        a_pot = BilinearForm(fes_pot)
+        a_pot += epsilon * grad(phi_pot) * grad(v_phi_pot) * dx
+        
+        # Linear form (right-hand side) - source term from charge density
+        L_pot = LinearForm(fes_pot)
+        L_pot += rho_charge * v_phi_pot * dx
+        
+        # Assemble the system
+        a_pot.Assemble()
+        L_pot.Assemble()
+        
+        # Create a residual vector for the update
+        r = L_pot.vec.CreateVector()
+        r.data = L_pot.vec - a_pot.mat * phi_pot_gf.vec
+        
+        # Solve the system, respecting Dirichlet boundary conditions
+        phi_pot_gf.vec.data += a_pot.mat.Inverse(fes_pot.FreeDofs()) * r
+        
+        # Verify boundary conditions are being properly applied
+        print("Verifying boundary conditions:")
+        boundaries = mesh.GetBoundaries()
+        for i in range(len(boundaries)):
+            bn = boundaries[i]
+            if bn == "emitter" or bn == "collector":
+                try:
+                    # Find an element on this boundary
+                    for el_id in range(mesh.ne):
+                        el = mesh[ElementId(BND, el_id)]
+                        if mesh.GetBoundaries()[el_id] == bn:
+                            # Get the coordinates of the first vertex
                             vertex = mesh[el.vertices[0]]
                             r, z = vertex.point[0], vertex.point[1]
-                            try:
-                                mesh_point = mesh(r, z)
-                                value = phi_pot_gf(mesh_point)
-                                print(f"  Boundary {bn}: {value:.2f}V (expected {boundary_values[bn]:.2f}V)")
-                                break
-                            except Exception as e:
-                                print(f"  Could not verify boundary {bn}: {e}")
-    
-    return phi_pot_gf
+                            
+                            # Sample the potential at this point
+                            mesh_point = mesh(r, z)
+                            value = phi_pot_gf(mesh_point)
+                            print(f"  Boundary {bn}: sampled voltage at ({r:.2f}, {z:.2f}) = {value:.2f}V")
+                            break
+                except Exception as e:
+                    print(f"  Could not sample boundary {bn}: {e}")
+        
+        return phi_pot_gf
 
 def solve_navier_stokes(mesh, fes_vel, u_gf, rho_charge, E_field, dt, 
                         rho_air=1.225, mu_air=1.8e-5, ion_neutral_collision_freq=1e9):

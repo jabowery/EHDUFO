@@ -109,41 +109,90 @@ class EHDDomain(GeometricObject):
         # Now that FES and GFs are created, notify objects
         for obj_info in self.contained_objects:
             obj = obj_info['object']
+            print(f"Notifying {type(obj).__name__} that mesh has been generated")
             obj.on_mesh_generated(self)
 
         return self.mesh
+    if False:
+        def apply_all_boundary_conditions(self):
+            """Apply all boundary conditions from domain and contained objects."""
+            # Apply potential boundary conditions
+            boundaries = self.mesh.GetBoundaries()
+            for i in range(len(boundaries)):
+                bn = boundaries[i]
+                if bn in self.dirichlet_boundaries and 'volts' in self.dirichlet_boundaries[bn]:
+                    voltage = self.dirichlet_boundaries[bn]['volts']
+                    for dof in self.fes_pot.GetDofNrs(ElementId(BND, i)):
+                        self.phi_pot_gf.vec[dof] = voltage
+            
+            # Apply velocity boundary conditions (zero at boundaries)
+            for i in range(len(boundaries)):
+                bn = boundaries[i]
+                if bn in self.dirichlet_boundaries and ('no_flow' in self.dirichlet_boundaries[bn] or 'volts' in self.dirichlet_boundaries[bn]):
+                    for dof in self.fes_vel.GetDofNrs(ElementId(BND, i)):
+                        self.u_gf.vec[dof] = 0
+    else:
+        def apply_all_boundary_conditions(self):
+            """Apply all boundary conditions from domain and contained objects."""
+            # Get the boundaries
+            boundaries = self.mesh.GetBoundaries()
 
-    def apply_all_boundary_conditions(self):
-        """Apply all boundary conditions from domain and contained objects."""
-        # Apply potential boundary conditions
-        boundaries = self.mesh.GetBoundaries()
-        for i in range(len(boundaries)):
-            bn = boundaries[i]
-            if bn in self.dirichlet_boundaries and 'volts' in self.dirichlet_boundaries[bn]:
-                voltage = self.dirichlet_boundaries[bn]['volts']
-                for dof in self.fes_pot.GetDofNrs(ElementId(BND, i)):
-                    self.phi_pot_gf.vec[dof] = voltage
-        
-        # Apply velocity boundary conditions (zero at boundaries)
-        for i in range(len(boundaries)):
-            bn = boundaries[i]
-            if bn in self.dirichlet_boundaries and ('no_flow' in self.dirichlet_boundaries[bn] or 'volts' in self.dirichlet_boundaries[bn]):
-                for dof in self.fes_vel.GetDofNrs(ElementId(BND, i)):
-                    self.u_gf.vec[dof] = 0
+            # First, print out all boundaries for debugging
+            print("Available boundaries:")
+            for i, bn in enumerate(boundaries):
+                print(f"  {i}: {bn}")
+
+            # Apply boundary conditions for each boundary
+            for i in range(len(boundaries)):
+                bn = boundaries[i]
+                if bn in self.dirichlet_boundaries and 'volts' in self.dirichlet_boundaries[bn]:
+                    voltage = self.dirichlet_boundaries[bn]['volts']
+                    print(f"Applying {voltage:.2f}V to boundary '{bn}'")
+                    # Directly set the potential at this boundary
+                    self.phi_pot_gf.Set(voltage, definedon=self.mesh.Boundaries(bn))
+
+            # Ask each object to apply its boundary conditions
+            for obj_info in self.contained_objects:
+                obj = obj_info['object']
+                obj.apply_boundary_conditions(self)
 
     def compute_electric_field(self):
         """Compute electric field from potential."""
-        self.E_field = -grad(self.phi_pot_gf)
+        if self.phi_pot_gf is None:
+            raise ValueError("Potential field not initialized")
+        
+        # Create a vector field for the electric field
+        E_field_gf = GridFunction(VectorH1(self.mesh, order=1))
+        
+        # Set the electric field using the negative gradient of potential
+        E_field_gf.Set(-grad(self.phi_pot_gf))
+        
+        # Store and return the result
+        self.E_field = E_field_gf
         return self.E_field
 
     def get_epsilon(self):
-        """Get the permittivity coefficient function for the domain."""
+        """
+        Get the permittivity coefficient function for the domain.
+        
+        Returns:
+            CoefficientFunction for permittivity
+        """
         if self.mesh is None:
             raise ValueError("Mesh must be generated before getting permittivity")
-
-        epsilon_r = CoefficientFunction([self.materials[mat]["epsilon_r"]
-                                       for mat in self.mesh.GetMaterials()])
+            
+        epsilon_r = CoefficientFunction([self.materials[mat]["epsilon_r"] 
+                                         for mat in self.mesh.GetMaterials()])
         return epsilon_r * self.epsilon_0
+    
+#    def get_epsilon(self):
+#        """Get the permittivity coefficient function for the domain."""
+#        if self.mesh is None:
+#            raise ValueError("Mesh must be generated before getting permittivity")
+#
+#        epsilon_r = CoefficientFunction([self.materials[mat]["epsilon_r"]
+#                                       for mat in self.mesh.GetMaterials()])
+#        return epsilon_r * self.epsilon_0
 
     def on_mesh_generated(self, domain):
         """Called when a mesh containing this electrode is generated.
@@ -182,20 +231,6 @@ class EHDDomain(GeometricObject):
         print(f"  - {len(self.pot_boundary_dofs)} potential DOFs")
         print(f"  - {len(self.rho_boundary_dofs)} charge density DOFs")
         print(f"  - Length: {self.length:.6f} m, Area: {self.area:.6f} m²")
-    def get_epsilon(self):
-        """
-        Get the permittivity coefficient function for the domain.
-        
-        Returns:
-            CoefficientFunction for permittivity
-        """
-        if self.mesh is None:
-            raise ValueError("Mesh must be generated before getting permittivity")
-            
-        epsilon_r = CoefficientFunction([self.materials[mat]["epsilon_r"] 
-                                         for mat in self.mesh.GetMaterials()])
-        return epsilon_r * self.epsilon_0
-    
     def create_potential_profile(self, mesh, phi_pot_gf, emitter, collector, t, aircraft):
         """
         Creates 1D profiles of the potential field along different paths

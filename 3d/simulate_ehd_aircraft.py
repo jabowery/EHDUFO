@@ -54,8 +54,21 @@ emitter = Electrode("emitter", initial_voltage=-20e3)
 collector = Electrode("collector", initial_voltage=20e3)
 
 # Set up relationships
-aircraft.set_electrodes(emitter, collector)
-domain.add_object(aircraft, position=(10, 20))
+if False:
+    aircraft.set_electrodes(emitter, collector)
+    domain.add_object(aircraft, position=(0, 40/2 - 3/2))
+else:
+    aircraft.set_electrodes(emitter, collector)
+    # Adjust aircraft position to better center it in the domain
+    domain.add_object(aircraft, position=(domain.outer_r/4, domain.outer_z/2))
+
+    # Use a finer mesh especially near the electrodes
+    domain.generate_composite_mesh(maxh=0.5)
+
+    # Print aircraft positions for verification
+    print(f"Aircraft geometry:")
+    print(f"  Emitter: r={aircraft.emitter_r}, z={aircraft.emitter_z}")
+    print(f"  Collector: r={aircraft.collector_r}, z={aircraft.collector_z}")
 
 # Generate mesh, FES, and GFs
 domain.generate_composite_mesh()
@@ -194,24 +207,24 @@ while t < T_FINAL:
         try:
             # Sample above the emitter
             emitter_sample_point = domain.sample_potential_at_point(
-                mesh, 
-                phi_pot_gf, 
-                aircraft.emitter_r / 2, 
+                domain.mesh,
+                domain.phi_pot_gf,
+                aircraft.emitter_r / 2,
                 aircraft.emitter_z + 0.05
             )
-            
+
             # Sample below the collector
             collector_sample_point = domain.sample_potential_at_point(
-                mesh, 
-                phi_pot_gf,
+                domain.mesh,
+                domain.phi_pot_gf,
                 aircraft.collector_r / 2,
                 aircraft.collector_z - 0.05
             )
-            
+
             # Sample in the middle
             middle_sample_point = domain.sample_potential_at_point(
-                mesh,
-                phi_pot_gf,
+                domain.mesh,
+                domain.phi_pot_gf,
                 (aircraft.emitter_r + aircraft.collector_r) / 4,
                 (aircraft.emitter_z + aircraft.collector_z) / 2
             )
