@@ -47,103 +47,19 @@ DT = 1e-4  # Time step [s]
 T_FINAL = 0.01  # Final simulation time [s]
 OUTPUT_INTERVAL = 10  # Save output every N time steps
 
-# ----------------------------------------------------------------------
-# Domain and aircraft setup
-# ----------------------------------------------------------------------
-# Create domain
-domain = EHDDomain(
-    outer_r=20.0,
-    outer_z=40.0,
-    epsilon_0=EPSILON_0,
-    ion_mobility=ION_MOBILITY,
-    ion_diffusivity=ION_DIFFUSIVITY,
-    rho_air=RHO_AIR,
-    mu_air=MU_AIR,
-    min_ion_density=MIN_ION_DENSITY,
-    ion_neutral_collision_freq=ION_NEUTRAL_COLLISION_FREQ
-)
+# Create domain and objects
+domain = EHDDomain(outer_r=20.0, outer_z=40.0, boundary_voltage=0.0)
+aircraft = EHDAircraft(emitter_radius=0.1, collector_radius=5.0)
+emitter = Electrode("emitter", initial_voltage=-20e3)
+collector = Electrode("collector", initial_voltage=20e3)
 
-# Create aircraft
-aircraft = EHDAircraft(
-    mesh=None,  # Will be set after mesh generation
-    emitter_radius=0.1,
-    collector_radius=5.0,
-    center_hole_radius=0.0,
-    height=3.0,
-    base_z=40.0/2 - 3.0/2,  # Center the aircraft in the domain
-    initial_emitter_voltage=INITIAL_EMITTER_VOLTAGE,
-    initial_collector_voltage=INITIAL_COLLECTOR_VOLTAGE
-)
-
-# Generate mesh
-mesh = domain.generate_mesh(aircraft, emitter_gridsize=0.1)
-
-# Update aircraft with mesh
-aircraft.mesh = mesh
-
-# ----------------------------------------------------------------------
-# Finite element spaces
-# ----------------------------------------------------------------------
-# Create finite element spaces
-fes_pot = H1(mesh, order=2, dirichlet="collector|emitter|right")
-fes_rho = H1(mesh, order=1)
-fes_vel = VectorH1(mesh, order=2, 
-                  dirichlet="collector|emitter|outer_insulator|inner_insulator|right")
-
-# ----------------------------------------------------------------------
-# Initialize electrodes
-# ----------------------------------------------------------------------
-# Create electrodes with proper capacitance values and opposite voltages
-# The emitter should be at negative voltage, collector at positive voltage,
-# and domain boundaries at zero voltage
-emitter = Electrode(
-    mesh, 
-    fes_rho, 
-    "emitter", 
-    initial_voltage=INITIAL_EMITTER_VOLTAGE,  # Negative voltage for emitter
-    capacitance=EMITTER_CAPACITANCE
-)
-
-collector = Electrode(
-    mesh, 
-    fes_rho, 
-    "collector", 
-    initial_voltage=INITIAL_COLLECTOR_VOLTAGE,   # Positive voltage for collector
-    capacitance=COLLECTOR_CAPACITANCE
-)
-
-# Set electrodes on aircraft
+# Set up relationships
 aircraft.set_electrodes(emitter, collector)
+domain.add_object(aircraft, position=(10, 20))
 
-# ----------------------------------------------------------------------
-# Initialize variables
-# ----------------------------------------------------------------------
-# Initialize trial and test functions
-phi_pot, v_phi_pot = fes_pot.TnT()
-rho_charge, v_rho_charge = fes_rho.TnT()
-u, v = fes_vel.TnT()
+# Generate mesh, FES, and GFs
+domain.generate_composite_mesh()
 
-# Initialize charge density with minimum value
-rho_charge_gf = GridFunction(fes_rho)
-rho_charge_gf.Set(MIN_ION_DENSITY)
-
-# Initialize potential field
-phi_pot_gf = GridFunction(fes_pot)
-
-# Set Dirichlet boundary conditions for potential
-# Emitter: negative voltage
-emitter.set_dirichlet_bc(phi_pot_gf)
-# Collector: positive voltage
-collector.set_dirichlet_bc(phi_pot_gf)
-# Domain boundary: zero voltage
-phi_pot_gf.Set(0.0, definedon=mesh.Boundaries("right"))
-
-# Initialize velocity field
-u_gf = GridFunction(fes_vel)
-u_gf.Set(CoefficientFunction((0, 0)))
-
-# Get epsilon coefficient function
-epsilon = domain.get_epsilon()
 
 # ----------------------------------------------------------------------
 # Set up field output manager
@@ -151,13 +67,12 @@ epsilon = domain.get_epsilon()
 # Ensure output directory exists
 os.makedirs("ehd_output", exist_ok=True)
 
-# Initialize VTK output
 field_manager = FieldOutputManager({
-    "potential": phi_pot_gf,
-    "charge_density": rho_charge_gf,
-    "velocity": u_gf,
-    "electric_field": -grad(phi_pot_gf)
-}, output_dir="ehd_output", mesh=mesh)
+    "potential": domain.phi_pot_gf,
+    "charge_density": domain.rho_charge_gf,
+    "velocity": domain.u_gf,
+    "electric_field": domain.E_field
+}, output_dir="ehd_output", mesh=domain.mesh)
 
 field_manager.create_metadata_file()
 
@@ -187,128 +102,67 @@ print(f"  Collector voltage: {collector.voltage:.2f} V")
 print(f"  Emitter charge: {emitter.charge:.6e} C")
 print(f"  Collector charge: {collector.charge:.6e} C")
 
+# ==== Time Stepping Loop ====
+t = 0
+step = 0
+
+
 while t < T_FINAL:
-    # -----------------------------------------------------------------
-    # 1. Solve Poisson's equation for potential based on current charge
-    # -----------------------------------------------------------------
-    phi_pot_gf = solve_poisson_equation(mesh, fes_pot, rho_charge_gf, epsilon)
-    
-    # Set Dirichlet boundary conditions for electrodes
-    # This must be done after solving to ensure proper voltage values are applied
-    emitter.set_dirichlet_bc(phi_pot_gf)
-    collector.set_dirichlet_bc(phi_pot_gf)
-    phi_pot_gf.Set(0.0, definedon=mesh.Boundaries("right"))
-    
-    # -----------------------------------------------------------------
-    # 2. Calculate electric field from potential
-    # -----------------------------------------------------------------
-    E_field = -grad(phi_pot_gf)
-    E_norm = sqrt(E_field[0]**2 + E_field[1]**2)
-    
-    # -----------------------------------------------------------------
-    # 3. Emit charge from emitter electrode into space charge
-    # -----------------------------------------------------------------
-    # Calculate electric field at emitter for field emission model
-    E_field_at_emitter = emitter.calculate_average_field(E_field, offset=0.01)
-    
-    # Emit charge from emitter electrode
-    emitted_charge = emitter.emit(
-        rho_charge_gf, 
-        dt=DT, 
-        emission_coefficient=EMISSION_COEFFICIENT,
-        field_enhancement_factor=FIELD_ENHANCEMENT_FACTOR * E_field_at_emitter/1e6
-    )
-    
-    total_emitted_charge += emitted_charge
-    
-    # -----------------------------------------------------------------
-    # 4. Collect charge at collector electrode from space charge
-    # -----------------------------------------------------------------
-    # Calculate ion velocity (mobility * E-field + fluid velocity)
-    ion_velocity = ION_MOBILITY * E_field + u_gf
-
-    # Account for vehicle motion in axisymmetric coordinates
-    if abs(aircraft.velocity) > 1e-10:
-        ion_velocity = CoefficientFunction((
-            ion_velocity[0], 
-            ion_velocity[1] - aircraft.velocity
-        ))
-
-    # Collect charge using direct flux calculation
-    collected_charge = collector.collect_charge(
-        rho_charge_gf, 
-        ion_velocity, 
-        DT,
-        min_ion_density=MIN_ION_DENSITY
-    )
-    total_collected_charge += collected_charge
-
-    # Update aircraft charge balance
-    space_charge = Integrate(rho_charge_gf, mesh)
-    aircraft.update_charge_balance(emitted_charge, collected_charge, space_charge)
-
-    # Calculate voltage difference between electrodes
-    voltage_difference = abs(emitter.voltage - collector.voltage)
-
-    # Calculate power based on current and voltage difference
-    current = collected_charge / DT  # Use collected charge for current calculation
-    power = voltage_difference * abs(current)  # Power is always positive
-    
-    # -----------------------------------------------------------------
-    # 5. Solve transport equation for charge density
-    # -----------------------------------------------------------------
-    rho_charge_gf = solve_charge_transport(
-        rho_charge_gf, 
-        mesh, 
-        fes_rho, 
-        DT, 
-        ION_MOBILITY,
-        E_field, 
-        u_gf, 
-        aircraft.velocity,
-        diffusivity=ION_DIFFUSIVITY,
-        min_ion_density=MIN_ION_DENSITY
-    )
-    
-    # -----------------------------------------------------------------
-    # 6. Update potential again after charge redistribution
-    # -----------------------------------------------------------------
-    phi_pot_gf = solve_poisson_equation(mesh, fes_pot, rho_charge_gf, epsilon)
+    # 1. Solve Poisson's equation
+    domain.phi_pot_gf = solve_poisson_equation(
+        domain.mesh, domain.fes_pot, domain.rho_charge_gf, domain.epsilon_0)
     
     # Reapply boundary conditions
-    emitter.set_dirichlet_bc(phi_pot_gf)
-    collector.set_dirichlet_bc(phi_pot_gf)
-    phi_pot_gf.Set(0.0, definedon=mesh.Boundaries("right"))
+    domain.apply_all_boundary_conditions()
     
-    # -----------------------------------------------------------------
-    # 7. Calculate fluid velocity (air flow)
-    # -----------------------------------------------------------------
-    u_gf = solve_navier_stokes(
-        mesh, 
-        fes_vel, 
-        u_gf, 
-        rho_charge_gf, 
-        E_field, 
+    # 2. Calculate electric field
+    E_field = domain.compute_electric_field()
+    
+    # 3. Emit charge from emitter
+    emitted_charge = emitter.emit(domain.rho_charge_gf, dt=DT)
+    
+    # 4. Calculate ion velocity and collect charge
+    ion_velocity = domain.ion_mobility * E_field + domain.u_gf
+    collected_charge = collector.collect_charge(domain.rho_charge_gf, ion_velocity, DT)
+    
+    # 5. Update aircraft charge balance
+    space_charge = Integrate(domain.rho_charge_gf, domain.mesh)
+    aircraft.update_charge_balance(emitted_charge, collected_charge, space_charge)
+
+    # 6. Solve charge transport equation
+    domain.rho_charge_gf = solve_charge_transport(
+        domain.rho_charge_gf,
+        domain.mesh,
+        domain.fes_rho,
         DT,
-        rho_air=RHO_AIR,
-        mu_air=MU_AIR,
-        ion_neutral_collision_freq=ION_NEUTRAL_COLLISION_FREQ
+        domain.ion_mobility,
+        domain.E_field,
+        domain.u_gf,
+        aircraft.velocity,
+        diffusivity=domain.ion_diffusivity,
+        min_ion_density=domain.min_ion_density
     )
-    
-    # -----------------------------------------------------------------
+
+    # 7. Solve Navier-Stokes for fluid velocity
+    domain.u_gf = solve_navier_stokes(
+        domain.mesh,
+        domain.fes_vel,
+        domain.u_gf,
+        domain.rho_charge_gf,
+        domain.E_field,
+        DT,
+        rho_air=domain.rho_air,
+        mu_air=domain.mu_air
+    )
+
     # 8. Calculate thrust and update aircraft velocity
-    # -----------------------------------------------------------------
-    thrust = aircraft.calculate_thrust(mesh, rho_charge_gf, u_gf)
+    thrust = aircraft.calculate_thrust(domain.mesh, domain.rho_charge_gf, domain.u_gf)
     aircraft.update_velocity(DT)
-    
-    # -----------------------------------------------------------------
-    # 9. Calculate complete power data
-    # -----------------------------------------------------------------
-    power_data = aircraft.calculate_system_power(DT)
-    
+
     # Store history data
     time_history.append(t)
     thrust_history.append(thrust)
+    power_data = aircraft.calculate_system_power(DT)
     power_history.append(power_data["total_power"])
     voltage_history.append((emitter.voltage, collector.voltage))
     
@@ -318,7 +172,7 @@ while t < T_FINAL:
         field_manager.save_fields(t=t)
         
         # Create potential profile
-        domain.create_potential_profile(mesh, phi_pot_gf, emitter, collector, t, aircraft)
+        domain.create_potential_profile(domain.mesh, domain.phi_pot_gf, emitter, collector, t, aircraft)
         
         # Output status
         print(f"t={t:.5f}s, "

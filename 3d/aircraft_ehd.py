@@ -2,48 +2,20 @@ from ngsolve import *
 from netgen.geom2d import EdgeInfo as EI, PointInfo as PI, Solid2d
 from netgen.geom2d import CSG2d
 import numpy as np
+from geometric_object import GeometricObject
 
-class EHDAircraft:
-    """
-    Class representing an EHD aircraft with a geometric configuration
-    of emitter, collector and insulator, and associated physical properties.
-    """
-    def __init__(self, 
-                 mesh,
-                 emitter_electrode=None,
-                 collector_electrode=None,
-                 emitter_radius=0.1,
-                 collector_radius=5.0,
-                 center_hole_radius=0.0,
-                 height=3.0,
-                 base_z=18.5,
-                 initial_emitter_voltage=20e3,
-                 initial_collector_voltage=0.0):
-        """
-        Initialize the EHD aircraft geometry and properties.
-        
-        Args:
-            mesh: The computational mesh
-            emitter_electrode: Electrode object for the emitter (will be set later if None)
-            collector_electrode: Electrode object for the collector (will be set later if None)
-            emitter_radius: Radius of the emitter electrode (m)
-            collector_radius: Radius of the collector electrode (m)
-            center_hole_radius: Radius of center hole (if applicable) (m)
-            height: Height of the aircraft structure (m)
-            base_z: Base z-coordinate of the aircraft (m)
-            initial_emitter_voltage: Initial voltage of emitter (V)
-            initial_collector_voltage: Initial voltage of collector (V)
-        """
-        self.mesh = mesh
-        self.emitter_electrode = emitter_electrode
-        self.collector_electrode = collector_electrode
-        
+class EHDAircraft(GeometricObject):
+    def __init__(self, emitter_radius=0.1, collector_radius=5.0, height=3.0, 
+                 center_hole_radius=0.0, base_z=18.5, velocity=0.0, mass = 1.0, **kwargs):
+        super().__init__()
         # Geometry parameters
         self.emitter_radius = emitter_radius
         self.collector_radius = collector_radius
         self.center_hole_radius = center_hole_radius
         self.height = height
         self.base_z = base_z
+        self.velocity = velocity
+        self.mass = mass
         
         # Derived geometry parameters
         self.collector_z = self.base_z
@@ -51,24 +23,62 @@ class EHDAircraft:
         self.collector_r = self.collector_radius + self.center_hole_radius
         self.emitter_r = self.emitter_radius + self.center_hole_radius
         
-        # Electrical parameters
-        self.initial_emitter_voltage = initial_emitter_voltage
-        self.initial_collector_voltage = initial_collector_voltage
+        # Material properties
+        self.materials = {"insulator": {"epsilon_r": 4.0}}
         
-        # Physical properties
-        self.insulator_permittivity = 4.0  # Relative permittivity of insulator
-        self.mass = 1.0  # Aircraft mass (kg)
-        self.velocity = 0.0  # Current velocity (m/s)
-        self.thrust = 0.0  # Current thrust (N)
+        # Electrodes
+        self.emitter_electrode = None
+        self.collector_electrode = None
+    
+    def create_geometry(self):
+        """Create the geometric representation of the aircraft."""
+        rhombus = Solid2d([
+            (self.center_hole_radius, self.collector_z),
+            PI(maxh=0.1),
+            EI(bc="collector"),
+            (self.collector_r, self.collector_z),
+            PI(maxh=0.1),
+            EI(bc="outer_insulator"),
+            (self.emitter_r, self.emitter_z),
+            PI(maxh=0.1),
+            EI(bc="emitter"),
+            (self.center_hole_radius, self.emitter_z),
+            EI(bc="inner_insulator"),
+            PI(maxh=0.1),
+        ], mat="insulator")
         
-        # For shared total charge accounting
-        self.total_charge = 0.0  # Total system charge (C)
-        self.space_charge = 0.0  # Total space charge (C)
+        geo = CSG2d()
+        geo.Add(rhombus)
+        return geo
+
+    def apply_boundary_conditions(self, domain):
+        """Apply boundary conditions for this aircraft."""
+        # Add our boundaries to the domain
+        if self.emitter_electrode:
+            domain.dirichlet_boundaries.update({
+                'emitter': {'volts': self.emitter_electrode.voltage}
+            })
         
-        # For calculating currents
-        self.last_emitter_charge = 0.0
-        self.last_collector_charge = 0.0
+        if self.collector_electrode:
+            domain.dirichlet_boundaries.update({
+                'collector': {'volts': self.collector_electrode.voltage}
+            })
         
+        # Also add insulator boundaries if needed (with no voltage)
+        domain.dirichlet_boundaries.update({
+            'inner_insulator': {'no_flow': True},
+            'outer_insulator': {'no_flow': True}
+        })
+
+    def on_mesh_generated(self, domain):
+        """Called when the domain generates a mesh with this aircraft."""
+        # Inform electrodes about the mesh and FES
+        if self.emitter_electrode:
+            self.emitter_electrode.on_mesh_generated(domain)
+        
+        if self.collector_electrode:
+            self.collector_electrode.on_mesh_generated(domain)
+
     def create_geometry(self):
         """
         Create the CSG2d geometric representation of the aircraft for mesh generation.
@@ -95,23 +105,16 @@ class EHDAircraft:
         return rhombus
     
     def set_electrodes(self, emitter_electrode, collector_electrode):
-        """
-        Set the electrode objects for the aircraft.
-        
-        Args:
-            emitter_electrode: Electrode object for the emitter
-            collector_electrode: Electrode object for the collector
-        """
+        """Set the electrode objects for the aircraft."""
         self.emitter_electrode = emitter_electrode
         self.collector_electrode = collector_electrode
         
-        # Initialize electrode voltages with provided initial values
-        if emitter_electrode:
-            self.emitter_electrode.voltage = self.initial_emitter_voltage
+        # Set the aircraft reference in the electrodes
+        emitter_electrode.aircraft = self
+        collector_electrode.aircraft = self
         
-        if collector_electrode:
-            self.collector_electrode.voltage = self.initial_collector_voltage
-        
+        return self
+    
     def update_charge_balance(self, emitted_charge, collected_charge, space_charge):
         """
         Update the charge balance of the aircraft system with a focus

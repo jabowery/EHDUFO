@@ -3,90 +3,185 @@ from netgen.geom2d import EdgeInfo as EI, PointInfo as PI, Solid2d
 from netgen.geom2d import CSG2d
 import numpy as np
 import matplotlib.pyplot as plt
+from geometric_object import GeometricObject
 
-class EHDDomain:
-    """
-    Class representing the computational domain for EHD simulations,
-    including air properties and mesh generation.
-    """
-    def __init__(self, 
-                 outer_r=20.0,
-                 outer_z=40.0,
-                 epsilon_0=8.854e-12,
-                 ion_mobility=2e-4,
-                 ion_diffusivity=5e-5,
-                 rho_air=1.225,
-                 mu_air=1.8e-5,
-                 min_ion_density=1e-14,
-                 ion_neutral_collision_freq=1e9):
-        """
-        Initialize the EHD domain with physical properties.
-        
-        Args:
-            outer_r: Outer radius of computational domain (m)
-            outer_z: Outer height of computational domain (m)
-            epsilon_0: Vacuum permittivity (F/m)
-            ion_mobility: Ion mobility coefficient (m^2/(V·s))
-            ion_diffusivity: Ion diffusion coefficient (m^2/s)
-            rho_air: Air density (kg/m^3)
-            mu_air: Air dynamic viscosity (Pa·s)
-            min_ion_density: Minimum ion density to maintain (C/m^3)
-            ion_neutral_collision_freq: Collision frequency between ions and neutral molecules (1/s)
-        """
-        # Domain dimensions
+class EHDDomain(GeometricObject):
+    """Domain class that manages EHD-specific physics and mesh."""
+    
+    def __init__(self, outer_r=20.0, outer_z=40.0, epsilon_0=8.854e-12, 
+                 boundary_voltage=0.0, **kwargs):
+        super().__init__()
+
         self.outer_r = outer_r
         self.outer_z = outer_z
-        
-        # Physical constants
         self.epsilon_0 = epsilon_0
-        self.ion_mobility = ion_mobility
-        self.ion_diffusivity = ion_diffusivity
-        self.rho_air = rho_air
-        self.mu_air = mu_air
-        self.min_ion_density = min_ion_density
-        self.ion_neutral_collision_freq = ion_neutral_collision_freq
-        
-        # Placeholders
+        self.dirichlet_boundaries = {}
+
+        # Physics properties
+        self.ion_mobility = kwargs.get('ion_mobility', 2e-4)
+        self.ion_diffusivity = kwargs.get('ion_diffusivity', 5e-5)
+        self.rho_air = kwargs.get('rho_air', 1.225)
+        self.mu_air = kwargs.get('mu_air', 1.8e-5)
+        self.min_ion_density = kwargs.get('min_ion_density', 1e-14)
+
+        # Domain attributes
+        self.materials = {"air": {"epsilon_r": 1.0}}
+
+        # Simulation objects
         self.mesh = None
-        self.materials = {
-            "rect": {"epsilon_r": 1.0},      # Air region
-            "insulator": {"epsilon_r": 4.0}  # Insulator region
-        }
         
-    def generate_mesh(self, aircraft, emitter_gridsize=0.1):
-        """
-        Generate a mesh for the combined air domain and aircraft.
+        # Add grid functions to domain attributes
+        self.phi_pot_gf = None  # Potential
+        self.rho_charge_gf = None  # Charge density
+        self.u_gf = None  # Velocity
+        self.E_field = None  # Electric field (derived)
+    
         
-        Args:
-            aircraft: EHDAircraft object
-            emitter_gridsize: Grid size near emitter for refinement
-            
-        Returns:
-            NGSolve mesh
-        """
+    def generate_composite_mesh(self, maxh=0.9):
+        """Generate mesh including all contained objects."""
         geo = CSG2d()
-        
-        # Create the outer rectangle (air domain)
-        rect = Solid2d([
+
+        # Create the base domain geometry
+        base_rect = Solid2d([
             (0, 0),
             (self.outer_r, 0),
             EI(bc="right"),
             (self.outer_r, self.outer_z),
             (0, self.outer_z),
             EI(maxh=0.4),
-        ], mat="rect")
-        
-        # Get aircraft geometry (insulator)
-        rhombus = aircraft.create_geometry()
-        
-        # Combine domains: air = outer rectangle - insulator
-        geo.Add(rect - rhombus)
-        geo.Add(rhombus)
-        
-        # Generate mesh
-        self.mesh = Mesh(geo.GenerateMesh(maxh=0.9))
+        ], mat="air")
+
+        # Add domain boundary conditions
+        self.dirichlet_boundaries.update({'right': {'volts': 0}})
+
+        # Start with complete domain
+        domain_geo = base_rect
+
+        # Apply CSG operations for each contained object
+        for obj_info in self.contained_objects:
+            obj = obj_info['object']
+            obj_geo = obj.create_geometry()
+
+            # Subtract object from domain
+            domain_geo = domain_geo - obj_geo
+
+            # Add the object with its material
+            geo.Add(obj_geo)
+
+        # Add the final domain geometry
+        geo.Add(domain_geo)
+
+        # Generate the mesh
+        self.mesh = Mesh(geo.GenerateMesh(maxh=maxh))
+
+        # Now that we have a mesh, make sure all objects inform us about their boundaries
+        for obj_info in self.contained_objects:
+            obj = obj_info['object']
+            obj.apply_boundary_conditions(self)
+
+        # Now create finite element spaces with collected boundaries
+        # Filter boundaries based on their purpose - only use 'volts' boundaries for potential
+        potential_boundaries = [bn for bn, props in self.dirichlet_boundaries.items()
+                               if 'volts' in props]
+        dirichlet_str = "|".join(potential_boundaries)
+        self.fes_pot = H1(self.mesh, order=2, dirichlet=dirichlet_str)
+
+        # For velocity, add no-flow boundaries
+        vel_boundaries = [bn for bn, props in self.dirichlet_boundaries.items()
+                         if 'no_flow' in props or 'volts' in props]  # Typically all boundaries are no-flow
+        vel_dirichlet_str = "|".join(vel_boundaries)
+
+        self.fes_rho = H1(self.mesh, order=1)
+        self.fes_vel = VectorH1(self.mesh, order=2, dirichlet=vel_dirichlet_str)
+
+        # Initialize grid functions
+        self.phi_pot_gf = GridFunction(self.fes_pot)  # Potential
+        self.rho_charge_gf = GridFunction(self.fes_rho)  # Charge density
+        self.u_gf = GridFunction(self.fes_vel)  # Velocity
+
+        # Set initial values
+        self.rho_charge_gf.Set(self.min_ion_density)  # Minimum charge density
+        self.u_gf.Set(CoefficientFunction((0, 0)))  # Zero initial velocity
+
+        # Apply boundary conditions after creating grid functions
+        self.apply_all_boundary_conditions()
+
+        # Now that FES and GFs are created, notify objects
+        for obj_info in self.contained_objects:
+            obj = obj_info['object']
+            obj.on_mesh_generated(self)
+
         return self.mesh
-    
+
+    def apply_all_boundary_conditions(self):
+        """Apply all boundary conditions from domain and contained objects."""
+        # Apply potential boundary conditions
+        boundaries = self.mesh.GetBoundaries()
+        for i in range(len(boundaries)):
+            bn = boundaries[i]
+            if bn in self.dirichlet_boundaries and 'volts' in self.dirichlet_boundaries[bn]:
+                voltage = self.dirichlet_boundaries[bn]['volts']
+                for dof in self.fes_pot.GetDofNrs(ElementId(BND, i)):
+                    self.phi_pot_gf.vec[dof] = voltage
+        
+        # Apply velocity boundary conditions (zero at boundaries)
+        for i in range(len(boundaries)):
+            bn = boundaries[i]
+            if bn in self.dirichlet_boundaries and ('no_flow' in self.dirichlet_boundaries[bn] or 'volts' in self.dirichlet_boundaries[bn]):
+                for dof in self.fes_vel.GetDofNrs(ElementId(BND, i)):
+                    self.u_gf.vec[dof] = 0
+
+    def compute_electric_field(self):
+        """Compute electric field from potential."""
+        self.E_field = -grad(self.phi_pot_gf)
+        return self.E_field
+
+    def get_epsilon(self):
+        """Get the permittivity coefficient function for the domain."""
+        if self.mesh is None:
+            raise ValueError("Mesh must be generated before getting permittivity")
+
+        epsilon_r = CoefficientFunction([self.materials[mat]["epsilon_r"]
+                                       for mat in self.mesh.GetMaterials()])
+        return epsilon_r * self.epsilon_0
+
+    def on_mesh_generated(self, domain):
+        """Called when a mesh containing this electrode is generated.
+        Binds the electrode to all relevant domain fields.
+        """
+        self.mesh = domain.mesh
+        self.domain = domain
+        
+        # Store references to all relevant finite element spaces
+        self.fes_pot = domain.fes_pot   # For potential field
+        self.fes_rho = domain.fes_rho   # For charge density
+        self.fes_vel = domain.fes_vel   # For velocity field
+        
+        # Find all DOFs on this electrode's boundary for each field
+        # Potential DOFs (for Dirichlet BC)
+        self.pot_boundary_dofs = set()
+        # Charge DOFs (for emission/collection)
+        self.rho_boundary_dofs = set()
+        
+        for i in range(self.mesh.nface):
+            bn = self.mesh.GetBoundaries()[i]
+            if bn == self.name:
+                # Get potential DOFs
+                for dof in self.fes_pot.GetDofNrs(ElementId(BND, i)):
+                    self.pot_boundary_dofs.add(dof)
+                
+                # Get charge density DOFs
+                for dof in self.fes_rho.GetDofNrs(ElementId(BND, i)):
+                    self.rho_boundary_dofs.add(dof)
+        
+        # Calculate electrode geometry properties based on mesh
+        self.length = self._calculate_total_length()
+        self.area = self._calculate_approximate_area()
+        
+        print(f"Electrode {self.name} connected to mesh with:")
+        print(f"  - {len(self.pot_boundary_dofs)} potential DOFs")
+        print(f"  - {len(self.rho_boundary_dofs)} charge density DOFs")
+        print(f"  - Length: {self.length:.6f} m, Area: {self.area:.6f} m²")
     def get_epsilon(self):
         """
         Get the permittivity coefficient function for the domain.
@@ -201,23 +296,58 @@ class EHDDomain:
             plt.tight_layout()
             plt.savefig(f'ehd_output/insulator_potential_t{t:.4f}.png', dpi=300, bbox_inches='tight')
             plt.close()
-    
+
+    # In domain_ehd.py, modify the sample_potential_at_point method
     def sample_potential_at_point(self, mesh, phi_pot_gf, r, z):
         """
-        Sample the potential field at a specified point (r, z).
-        
+        Sample the potential field at a specified point (r, z) with improved error handling.
+
         Args:
             mesh: The computational mesh
             phi_pot_gf: The potential field GridFunction
             r, z: Coordinates of the point to sample
-            
+
         Returns:
-            The potential value at the specified point
+            The potential value at the specified point or None if sampling fails
         """
         try:
+            # Create mesh point using mesh coordinates
             mesh_point = mesh(r, z)
             potential = phi_pot_gf(mesh_point)
             return potential
         except Exception as e:
-            print(f"Warning: Could not sample potential at point ({r}, {z}): {e}")
-            return None
+            # First fallback: Try a point slightly inside the domain
+            try:
+                # Adjust point slightly toward center of domain
+                adjusted_r = 0.99 * r if r > 0.1 else 1.01 * r
+                adjusted_z = 0.99 * z if z > self.outer_z/2 else 1.01 * z
+                mesh_point = mesh(adjusted_r, adjusted_z)
+                potential = phi_pot_gf(mesh_point)
+                print(f"Used adjusted point ({adjusted_r}, {adjusted_z}) for sampling")
+                return potential
+            except Exception as e2:
+                # Second fallback: Try to find the nearest point in the mesh
+                try:
+                    # Find closest mesh vertex and sample there
+                    min_dist = float('inf')
+                    closest_point = None
+
+                    # Check for a few vertices manually (not an exhaustive search but fast)
+                    for el in mesh.Elements():
+                        for v in el.vertices:
+                            vertex = mesh[v]
+                            vr = vertex.point[0]
+                            vz = vertex.point[1]
+                            dist = (vr-r)**2 + (vz-z)**2
+                            if dist < min_dist:
+                                min_dist = dist
+                                closest_point = (vr, vz)
+
+                    if closest_point:
+                        mesh_point = mesh(closest_point[0], closest_point[1])
+                        potential = phi_pot_gf(mesh_point)
+                        print(f"Used nearest point ({closest_point[0]}, {closest_point[1]}) for sampling")
+                        return potential
+                except Exception as e3:
+                    print(f"Warning: Could not sample potential at point ({r}, {z}): {e}")
+                    return None

@@ -1,36 +1,25 @@
 from ngsolve import *
 import numpy as np
 import math
+from geometric_object import GeometricObject
 
-class Electrode:
+class Electrode(GeometricObject):
     """
     A class representing an electrode in an EHD simulation.
     Handles operations specific to electrodes like charge distribution,
     field calculation, and other electrode-specific properties.
     """
-    def __init__(self, mesh, fes_rho, name, initial_voltage=0.0, capacitance=1e-11):
-        """
-        Initialize an electrode object.
-        
-        Args:
-            mesh: NGSolve mesh
-            fes_rho: Finite element space for charge density
-            name: Name of the electrode boundary (e.g., "emitter" or "collector")
-            initial_voltage: Initial voltage of the electrode (V)
-            capacitance: Capacitance of the electrode (F)
-        """
-        self.mesh = mesh
-        self.fes_rho = fes_rho
+
+    def __init__(self, name, initial_voltage=0.0, capacitance=1e-11):
         self.name = name
-        self.capacitance = capacitance
         self._voltage = initial_voltage
-        
-        # Calculate initial charge based on Q = CV
+        self.capacitance = capacitance
         self._charge = self._voltage * self.capacitance
         
-        # Calculate geometry properties
-        self.length = self._calculate_total_length()
-        self.area = self._calculate_approximate_area()
+        # References
+        self.aircraft = None
+        self.mesh = None
+        self.boundary_dofs = None
         
     @property
     def voltage(self):
@@ -46,8 +35,6 @@ class Electrode:
             value: New voltage value (V)
         """
         self._voltage = value
-        # Update charge based on Q = CV
-        self._charge = self._voltage * self.capacitance
     
     @property
     def charge(self):
@@ -63,11 +50,6 @@ class Electrode:
             value: New charge value (C)
         """
         self._charge = value
-        # Update voltage based on V = Q/C
-        if self.capacitance > 0:
-            self._voltage = self._charge / self.capacitance
-        else:
-            self._voltage = 0.0
     
     def _calculate_total_length(self):
         """Calculate the total length of the electrode boundary."""
@@ -404,12 +386,53 @@ class Electrode:
         self.charge += collected_charge
         
         return collected_charge
-    
-    def set_dirichlet_bc(self, gf_potential):
+
+    def set_dirichlet_bc(self, phi_pot_gf):
+        """Apply voltage boundary condition to potential field.
+        The phi_pot_gf knows its FES, so we don't need to pass it separately.
         """
-        Set Dirichlet boundary condition on the potential based on electrode voltage.
+        if not self.boundary_dofs:
+            raise ValueError(f"Electrode {self.name} not connected to a mesh")
+
+        # Directly set DOF values
+        for dof in self.boundary_dofs:
+            phi_pot_gf.vec[dof] = self._voltage
+
+    def on_mesh_generated(self, domain):
+        """Called when a mesh containing this electrode is generated.
+        Binds the electrode to all relevant domain fields.
+        """
+        self.mesh = domain.mesh
+        self.domain = domain
         
-        Args:
-            gf_potential: GridFunction for electric potential
-        """
-        gf_potential.Set(self._voltage, definedon=self.mesh.Boundaries(self.name))
+        # Store references to all relevant finite element spaces
+        self.fes_pot = domain.fes_pot   # For potential field
+        self.fes_rho = domain.fes_rho   # For charge density
+        self.fes_vel = domain.fes_vel   # For velocity field
+        
+        # Find all DOFs on this electrode's boundary for each field
+        # Potential DOFs (for Dirichlet BC)
+        self.pot_boundary_dofs = set()
+        # Charge DOFs (for emission/collection)
+        self.rho_boundary_dofs = set()
+        
+        boundaries = self.mesh.GetBoundaries()
+        for i in range(len(boundaries)):
+            bn = boundaries[i]
+            if bn == self.name:
+                # Get potential DOFs
+                for dof in self.fes_pot.GetDofNrs(ElementId(BND, i)):
+                    self.pot_boundary_dofs.add(dof)
+                
+                # Get charge density DOFs
+                for dof in self.fes_rho.GetDofNrs(ElementId(BND, i)):
+                    self.rho_boundary_dofs.add(dof)
+        
+        # Calculate electrode geometry properties based on mesh
+        self.length = self._calculate_total_length()
+        self.area = self._calculate_approximate_area()
+        
+        print(f"Electrode {self.name} connected to mesh with:")
+        print(f"  - {len(self.pot_boundary_dofs)} potential DOFs")
+        print(f"  - {len(self.rho_boundary_dofs)} charge density DOFs")
+        print(f"  - Length: {self.length:.6f} m, Area: {self.area:.6f} m²")
