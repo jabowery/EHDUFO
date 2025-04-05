@@ -1,3 +1,5 @@
+import logging
+import logging
 from ngsolve import *
 from netgen.geom2d import EdgeInfo as EI, PointInfo as PI, Solid2d
 from netgen.geom2d import CSG2d
@@ -109,7 +111,7 @@ class EHDDomain(GeometricObject):
         # Now that FES and GFs are created, notify objects
         for obj_info in self.contained_objects:
             obj = obj_info['object']
-            print(f"Notifying {type(obj).__name__} that mesh has been generated")
+            logging.debug(f"Notifying {type(obj).__name__} that mesh has been generated")
             obj.on_mesh_generated(self)
 
         return self.mesh
@@ -138,16 +140,16 @@ class EHDDomain(GeometricObject):
             boundaries = self.mesh.GetBoundaries()
 
             # First, print out all boundaries for debugging
-            print("Available boundaries:")
+            logging.debug("Available boundaries:")
             for i, bn in enumerate(boundaries):
-                print(f"  {i}: {bn}")
+                logging.debug(f"  {i}: {bn}")
 
             # Apply boundary conditions for each boundary
             for i in range(len(boundaries)):
                 bn = boundaries[i]
                 if bn in self.dirichlet_boundaries and 'volts' in self.dirichlet_boundaries[bn]:
                     voltage = self.dirichlet_boundaries[bn]['volts']
-                    print(f"Applying {voltage:.2f}V to boundary '{bn}'")
+                    logging.debug(f"Applying {voltage:.2f}V to boundary '{bn}'")
                     # Directly set the potential at this boundary
                     self.phi_pot_gf.Set(voltage, definedon=self.mesh.Boundaries(bn))
 
@@ -227,10 +229,10 @@ class EHDDomain(GeometricObject):
         self.length = self._calculate_total_length()
         self.area = self._calculate_approximate_area()
         
-        print(f"Electrode {self.name} connected to mesh with:")
-        print(f"  - {len(self.pot_boundary_dofs)} potential DOFs")
-        print(f"  - {len(self.rho_boundary_dofs)} charge density DOFs")
-        print(f"  - Length: {self.length:.6f} m, Area: {self.area:.6f} m²")
+        logging.debug(f"Electrode {self.name} connected to mesh with:")
+        logging.debug(f"  - {len(self.pot_boundary_dofs)} potential DOFs")
+        logging.debug(f"  - {len(self.rho_boundary_dofs)} charge density DOFs")
+        logging.debug(f"  - Length: {self.length:.6f} m, Area: {self.area:.6f} m²")
     def create_potential_profile(self, mesh, phi_pot_gf, emitter, collector, t, aircraft):
         """
         Creates 1D profiles of the potential field along different paths
@@ -358,7 +360,7 @@ class EHDDomain(GeometricObject):
                 adjusted_z = 0.99 * z if z > self.outer_z/2 else 1.01 * z
                 mesh_point = mesh(adjusted_r, adjusted_z)
                 potential = phi_pot_gf(mesh_point)
-                print(f"Used adjusted point ({adjusted_r}, {adjusted_z}) for sampling")
+                logging.debug(f"Used adjusted point ({adjusted_r}, {adjusted_z}) for sampling")
                 return potential
             except Exception as e2:
                 # Second fallback: Try to find the nearest point in the mesh
@@ -381,8 +383,8 @@ class EHDDomain(GeometricObject):
                     if closest_point:
                         mesh_point = mesh(closest_point[0], closest_point[1])
                         potential = phi_pot_gf(mesh_point)
-                        print(f"Used nearest point ({closest_point[0]}, {closest_point[1]}) for sampling")
+                        logging.debug(f"Used nearest point ({closest_point[0]}, {closest_point[1]}) for sampling")
                         return potential
                 except Exception as e3:
-                    print(f"Warning: Could not sample potential at point ({r}, {z}): {e}")
+                    logging.debug(f"Warning: Could not sample potential at point ({r}, {z}): {e}")
                     return None

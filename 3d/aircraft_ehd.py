@@ -1,3 +1,4 @@
+import logging
 from ngsolve import *
 from netgen.geom2d import EdgeInfo as EI, PointInfo as PI, Solid2d
 from netgen.geom2d import CSG2d
@@ -76,22 +77,22 @@ class EHDAircraft(GeometricObject):
             # Let electrodes apply their boundary conditions directly
             if self.emitter_electrode:
                 self.emitter_electrode.set_dirichlet_bc(domain.phi_pot_gf)
-                print(f"Setting emitter boundary to {self.emitter_electrode.voltage:.2f}V")
+                logging.debug(f"Setting emitter boundary to {self.emitter_electrode.voltage:.2f}V")
 
             if self.collector_electrode:
                 self.collector_electrode.set_dirichlet_bc(domain.phi_pot_gf)
-                print(f"Setting collector boundary to {self.collector_electrode.voltage:.2f}V")
+                logging.debug(f"Setting collector boundary to {self.collector_electrode.voltage:.2f}V")
 
     def on_mesh_generated(self, domain):
         """Called when the domain generates a mesh with this aircraft."""
-        print('In aircraft.on_mesh_generated')
+        logging.debug('In aircraft.on_mesh_generated')
         # Inform electrodes about the mesh and FES
         if self.emitter_electrode:
-            print("Calling on_mesh_generated for emitter electrode")
+            logging.debug("Calling on_mesh_generated for emitter electrode")
             self.emitter_electrode.on_mesh_generated(domain)
         
         if self.collector_electrode:
-            print("Calling on_mesh_generated for collector electrode")
+            logging.debug("Calling on_mesh_generated for collector electrode")
             self.collector_electrode.on_mesh_generated(domain)
 
 
@@ -182,7 +183,7 @@ class EHDAircraft(GeometricObject):
                 
                 # Log this power supply intervention
                 power_supply_action = abs(emitter_adjustment) + abs(collector_adjustment)
-                print(f"Power supply intervened with {power_supply_action:.6e}C charge adjustment")
+                logging.debug(f"Power supply intervened with {power_supply_action:.6e}C charge adjustment")
     
     def calculate_thrust(self, mesh, rho_charge_gf, u_gf, RHO_AIR=1.225):
         """

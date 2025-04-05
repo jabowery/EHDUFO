@@ -1,3 +1,4 @@
+import logging
 import os
 import numpy as np
 from ngsolve import *
@@ -213,7 +214,7 @@ class FieldOutputManager:
                                 is_vector=False,
                                 time=t)
                 except Exception as e:
-                    print(f"Warning: Could not evaluate field {field_name} at mesh vertices: {e}")
+                    logging.debug(f"Warning: Could not evaluate field {field_name} at mesh vertices: {e}")
                     continue
         
         # Update counters

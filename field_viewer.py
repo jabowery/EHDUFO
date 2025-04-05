@@ -1,3 +1,4 @@
+import logging
 #!/usr/bin/env python3
 """
 Sample script to visualize EHD simulation data saved with FieldOutputManager.

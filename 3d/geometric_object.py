@@ -1,3 +1,5 @@
+import logging
+import logging
 from ngsolve import *
 class GeometricObject:
     """Base class for objects that have a geometric representation."""

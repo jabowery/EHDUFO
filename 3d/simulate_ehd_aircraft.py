@@ -1,3 +1,7 @@
+import logging
+logging.basicConfig(level=logging.DEBUG,  # Set the desired logging level
+                    #                    format='%(asctime)s - %(levelname)s - %(message)s')
+                                        format='%(message)s')
 from ngsolve import *
 import pyngcore as ngcore
 import matplotlib.pyplot as plt
@@ -66,9 +70,9 @@ else:
     domain.generate_composite_mesh(maxh=0.5)
 
     # Print aircraft positions for verification
-    print(f"Aircraft geometry:")
-    print(f"  Emitter: r={aircraft.emitter_r}, z={aircraft.emitter_z}")
-    print(f"  Collector: r={aircraft.collector_r}, z={aircraft.collector_z}")
+    logging.debug(f"Aircraft geometry:")
+    logging.debug(f"  Emitter: r={aircraft.emitter_r}, z={aircraft.emitter_z}")
+    logging.debug(f"  Collector: r={aircraft.collector_r}, z={aircraft.collector_z}")
 
 # Generate mesh, FES, and GFs
 domain.generate_composite_mesh()
@@ -90,11 +94,11 @@ field_manager = FieldOutputManager({
 field_manager.create_metadata_file()
 
 # Print initial voltage configuration
-print(f"Initial voltage configuration:")
-print(f"  Emitter voltage: {emitter.voltage:.2f}V")
-print(f"  Collector voltage: {collector.voltage:.2f}V")
-print(f"  Voltage difference: {abs(emitter.voltage - collector.voltage):.2f}V")
-print(f"  Domain boundary voltage: 0.0V")
+logging.debug(f"Initial voltage configuration:")
+logging.debug(f"  Emitter voltage: {emitter.voltage:.2f}V")
+logging.debug(f"  Collector voltage: {collector.voltage:.2f}V")
+logging.debug(f"  Voltage difference: {abs(emitter.voltage - collector.voltage):.2f}V")
+logging.debug(f"  Domain boundary voltage: 0.0V")
 
 # ----------------------------------------------------------------------
 # Time stepping loop
@@ -108,12 +112,12 @@ thrust_history = []
 time_history = []
 voltage_history = []
 
-print("Starting simulation...")
-print(f"Initial conditions:")
-print(f"  Emitter voltage: {emitter.voltage:.2f} V")
-print(f"  Collector voltage: {collector.voltage:.2f} V")
-print(f"  Emitter charge: {emitter.charge:.6e} C")
-print(f"  Collector charge: {collector.charge:.6e} C")
+logging.debug("Starting simulation...")
+logging.debug(f"Initial conditions:")
+logging.debug(f"  Emitter voltage: {emitter.voltage:.2f} V")
+logging.debug(f"  Collector voltage: {collector.voltage:.2f} V")
+logging.debug(f"  Emitter charge: {emitter.charge:.6e} C")
+logging.debug(f"  Collector charge: {collector.charge:.6e} C")
 
 # ==== Time Stepping Loop ====
 t = 0
@@ -188,7 +192,7 @@ while t < T_FINAL:
         domain.create_potential_profile(domain.mesh, domain.phi_pot_gf, emitter, collector, t, aircraft)
         
         # Output status
-        print(f"t={t:.5f}s, "
+        logging.debug(f"t={t:.5f}s, "
               f"Emitter V={emitter.voltage:.2f}V, "
               f"Collector V={collector.voltage:.2f}V, "
               f"ΔV={power_data['voltage_difference']:.2f}V, "
@@ -229,11 +233,11 @@ while t < T_FINAL:
                 (aircraft.emitter_z + aircraft.collector_z) / 2
             )
             
-            print(f"  Potential above emitter: {emitter_sample_point:.2f}V, "
+            logging.debug(f"  Potential above emitter: {emitter_sample_point:.2f}V, "
                   f"  Potential below collector: {collector_sample_point:.2f}V, "
                   f"  Potential in middle: {middle_sample_point:.2f}V")
         except Exception as e:
-            print(f"  Warning: Could not sample potential at points: {e}")
+            logging.debug(f"  Warning: Could not sample potential at points: {e}")
     
     # Update time and step counter
     t += DT
@@ -287,14 +291,14 @@ plt.grid(True)
 plt.savefig('ehd_output/efficiency_history.png', dpi=300, bbox_inches='tight')
 plt.close()
 
-print("Simulation completed successfully.")
-print(f"Final results:")
-print(f"  Simulation time: {t:.5f}s")
-print(f"  Emitter voltage: {emitter.voltage:.2f}V")
-print(f"  Collector voltage: {collector.voltage:.2f}V")
-print(f"  Total emitted charge: {total_emitted_charge:.6e}C")
-print(f"  Total collected charge: {total_collected_charge:.6e}C")
-print(f"  Final thrust: {thrust:.6f}N")
-print(f"  Final aircraft velocity: {aircraft.velocity:.6f}m/s")
-print(f"  Final power consumption: {power:.2f}W")
-print(f"  Average efficiency: {np.mean(efficiency):.6f}N/W")
+logging.debug("Simulation completed successfully.")
+logging.debug(f"Final results:")
+logging.debug(f"  Simulation time: {t:.5f}s")
+logging.debug(f"  Emitter voltage: {emitter.voltage:.2f}V")
+logging.debug(f"  Collector voltage: {collector.voltage:.2f}V")
+logging.debug(f"  Total emitted charge: {total_emitted_charge:.6e}C")
+logging.debug(f"  Total collected charge: {total_collected_charge:.6e}C")
+logging.debug(f"  Final thrust: {thrust:.6f}N")
+logging.debug(f"  Final aircraft velocity: {aircraft.velocity:.6f}m/s")
+logging.debug(f"  Final power consumption: {power:.2f}W")
+logging.debug(f"  Average efficiency: {np.mean(efficiency):.6f}N/W")

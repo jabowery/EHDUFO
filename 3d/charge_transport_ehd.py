@@ -1,3 +1,5 @@
+import logging
+import logging
 from ngsolve import *
 import math
 import numpy as np
@@ -172,28 +174,28 @@ if False:
                         expected_value = boundary_values[bn]
                         
                         if abs(value - expected_value) > 1e-6:
-                            print(f"Warning: Boundary {bn} has value {value:.2f}V instead of expected {expected_value:.2f}V")
+                            logging.debug(f"Warning: Boundary {bn} has value {value:.2f}V instead of expected {expected_value:.2f}V")
                             bc_error = True
                             
                             # Check the actual DOF values for this boundary element
                             dofs = fes_pot.GetDofNrs(ElementId(BND, i))
                             if len(dofs) > 0:
                                 dof_values = [phi_pot_gf.vec[dof] for dof in dofs]
-                                print(f"  DOF values at boundary: {dof_values}")
+                                logging.debug(f"  DOF values at boundary: {dof_values}")
                     except Exception as e:
-                        print(f"Could not sample boundary {bn}: {e}")
+                        logging.debug(f"Could not sample boundary {bn}: {e}")
         
         if bc_error:
-            print("Attempting to restore boundary conditions...")
+            logging.debug("Attempting to restore boundary conditions...")
             # Force boundary condition compliance
             for bn in boundary_values:
                 if boundary_values[bn] is not None and bn in mesh.GetBoundaries():
                     value = boundary_values[bn]
                     phi_pot_gf.Set(value, definedon=mesh.Boundaries(bn))
-                    print(f"Re-applied {value:.2f}V to boundary {bn}")
+                    logging.debug(f"Re-applied {value:.2f}V to boundary {bn}")
             
             # Additional verification after correction
-            print("Checking boundary conditions after restoration:")
+            logging.debug("Checking boundary conditions after restoration:")
             for bn in boundary_values:
                 if boundary_values[bn] is not None and bn in mesh.GetBoundaries():
                     for i in range(mesh.nface):
@@ -205,10 +207,10 @@ if False:
                                 try:
                                     mesh_point = mesh(r, z)
                                     value = phi_pot_gf(mesh_point)
-                                    print(f"  Boundary {bn}: {value:.2f}V (expected {boundary_values[bn]:.2f}V)")
+                                    logging.debug(f"  Boundary {bn}: {value:.2f}V (expected {boundary_values[bn]:.2f}V)")
                                     break
                                 except Exception as e:
-                                    print(f"  Could not verify boundary {bn}: {e}")
+                                    logging.debug(f"  Could not verify boundary {bn}: {e}")
         
         return phi_pot_gf
 else:
@@ -242,7 +244,7 @@ else:
         phi_pot_gf.vec.data += a_pot.mat.Inverse(fes_pot.FreeDofs()) * r
         
         # Verify boundary conditions are being properly applied
-        print("Verifying boundary conditions:")
+        logging.debug("Verifying boundary conditions:")
         boundaries = mesh.GetBoundaries()
         for i in range(len(boundaries)):
             bn = boundaries[i]
@@ -259,10 +261,10 @@ else:
                             # Sample the potential at this point
                             mesh_point = mesh(r, z)
                             value = phi_pot_gf(mesh_point)
-                            print(f"  Boundary {bn}: sampled voltage at ({r:.2f}, {z:.2f}) = {value:.2f}V")
+                            logging.debug(f"  Boundary {bn}: sampled voltage at ({r:.2f}, {z:.2f}) = {value:.2f}V")
                             break
                 except Exception as e:
-                    print(f"  Could not sample boundary {bn}: {e}")
+                    logging.debug(f"  Could not sample boundary {bn}: {e}")
         
         return phi_pot_gf
 

@@ -1,3 +1,5 @@
+import logging
+import logging
 from ngsolve import *
 import numpy as np
 import math
@@ -390,7 +392,7 @@ class Electrode(GeometricObject):
     def set_dirichlet_bc(self, phi_pot_gf):
         """Apply voltage boundary condition to potential field."""
         if not hasattr(self, 'pot_boundary_dofs') or not self.pot_boundary_dofs:
-            print(f"Warning: Electrode {self.name} doesn't have boundary DOFs set up")
+            logging.debug(f"Warning: Electrode {self.name} doesn't have boundary DOFs set up")
             return
             
         # Set the voltage on all DOFs associated with this electrode's boundary
@@ -400,9 +402,9 @@ class Electrode(GeometricObject):
         # Also try setting directly using the boundary name
         try:
             phi_pot_gf.Set(self._voltage, definedon=self.mesh.Boundaries(self.name))
-            print(f"Applied {self._voltage:.2f}V to boundary '{self.name}' using Set method")
+            logging.debug(f"Applied {self._voltage:.2f}V to boundary '{self.name}' using Set method")
         except Exception as e:
-            print(f"Could not apply boundary condition using Set method: {e}")
+            logging.debug(f"Could not apply boundary condition using Set method: {e}")
 
     def apply_boundary_conditions(self, domain):
         """Apply boundary conditions for this aircraft."""
@@ -419,7 +421,7 @@ class Electrode(GeometricObject):
 
     def on_mesh_generated(self, domain):
         """Called when a mesh containing this electrode is generated."""
-        print(f"Electrode {self.name}: on_mesh_generated called")
+        logging.debug(f"Electrode {self.name}: on_mesh_generated called")
         self.mesh = domain.mesh
         self.domain = domain
         
@@ -433,20 +435,20 @@ class Electrode(GeometricObject):
         self.rho_boundary_dofs = set()
         
         boundaries = self.mesh.GetBoundaries()
-        print(f"Electrode {self.name}: Searching for boundary DOFs among {len(boundaries)} boundaries")
+        logging.debug(f"Electrode {self.name}: Searching for boundary DOFs among {len(boundaries)} boundaries")
         for i in range(len(boundaries)):
             bn = boundaries[i]
             if bn == self.name:
-                print(f"Electrode {self.name}: Found matching boundary at index {i}")
+                logging.debug(f"Electrode {self.name}: Found matching boundary at index {i}")
                 # Get potential DOFs
                 pot_dofs = self.fes_pot.GetDofNrs(ElementId(BND, i))
-                print(f"Electrode {self.name}: Found {len(pot_dofs)} potential DOFs")
+                logging.debug(f"Electrode {self.name}: Found {len(pot_dofs)} potential DOFs")
                 for dof in pot_dofs:
                     self.pot_boundary_dofs.add(dof)
                 
                 # Get charge density DOFs
                 rho_dofs = self.fes_rho.GetDofNrs(ElementId(BND, i))
-                print(f"Electrode {self.name}: Found {len(rho_dofs)} charge density DOFs")
+                logging.debug(f"Electrode {self.name}: Found {len(rho_dofs)} charge density DOFs")
                 for dof in rho_dofs:
                     self.rho_boundary_dofs.add(dof)
         
@@ -454,7 +456,7 @@ class Electrode(GeometricObject):
         self.length = self._calculate_total_length()
         self.area = self._calculate_approximate_area()
         
-        print(f"Electrode {self.name} connected to mesh with:")
-        print(f"  - {len(self.pot_boundary_dofs)} potential DOFs")
-        print(f"  - {len(self.rho_boundary_dofs)} charge density DOFs")
-        print(f"  - Length: {self.length:.6f} m, Area: {self.area:.6f} m²")
+        logging.debug(f"Electrode {self.name} connected to mesh with:")
+        logging.debug(f"  - {len(self.pot_boundary_dofs)} potential DOFs")
+        logging.debug(f"  - {len(self.rho_boundary_dofs)} charge density DOFs")
+        logging.debug(f"  - Length: {self.length:.6f} m, Area: {self.area:.6f} m²")

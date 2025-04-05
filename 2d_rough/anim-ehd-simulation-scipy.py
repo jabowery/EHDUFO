@@ -1,3 +1,4 @@
+import logging
 import numba
 import numpy as np
 import matplotlib.pyplot as plt
@@ -28,7 +29,7 @@ plt.style.use('seaborn-v0_8-whitegrid')
 plt.rcParams['figure.figsize'] = (12, 10)
 plt.rcParams['figure.dpi'] = 100
 
-print("Initializing EHD simulation...")
+logging.debug("Initializing EHD simulation...")
 
 # Physical Constants (using scaled values to improve numerical stability)
 epsilon_0 = 8.85e-12     # Vacuum permittivity [F/m]
@@ -102,7 +103,7 @@ def in_triangle(x, y, x1, y1, x2, y2, x3, y3):
 
 # Initialize domain mask (0 = fluid, 1 = solid/obstacle)
 domain_mask = np.zeros((ny+1, nx+1))
-print("Setting up domain geometry...")
+logging.debug("Setting up domain geometry...")
 
 # Set up triangle obstruction in the mask
 for j in range(ny+1):
@@ -157,7 +158,7 @@ for j in range(max(0, emitter_index_y-emitter_radius_cells), min(ny+1, emitter_i
         if ((i - emitter_index_x)**2 + (j - emitter_index_y)**2 <= emitter_radius_cells**2):
             bc_mask[j, i] = True
 
-print("Solving electric potential...")
+logging.debug("Solving electric potential...")
 # Solve Laplace's equation using Jacobi iteration for better stability
 max_iterations = 50000  # Increased max iterations
 tolerance = 1.0e-6
@@ -209,7 +210,7 @@ for iter in range(max_iterations):
     
     # Check for invalid values
     if has_invalid(new_potential):
-        print(f"Warning: Invalid values detected at iteration {iter}, reverting to simple averaging")
+        logging.debug(f"Warning: Invalid values detected at iteration {iter}, reverting to simple averaging")
         # Fall back to simple averaging
         for j in range(1, ny):
             for i in range(1, nx):
@@ -242,15 +243,15 @@ for iter in range(max_iterations):
     
     # Print progress every 1000 iterations
     if iter % 1000 == 0:
-        print(f"Iteration {iter}, max change: {max_change:.8f}, residual: {residual:.8f}")
+        logging.debug(f"Iteration {iter}, max change: {max_change:.8f}, residual: {residual:.8f}")
     
     # Check convergence
     if max_change < tolerance:
-        print(f"Electric potential solution converged after {iter+1} iterations")
+        logging.debug(f"Electric potential solution converged after {iter+1} iterations")
         break
 
 if iter == max_iterations - 1:
-    print("Warning: Maximum iterations reached without convergence")
+    logging.debug("Warning: Maximum iterations reached without convergence")
 
 # Plot convergence history
 plt.figure(figsize=(10, 6))
@@ -263,7 +264,7 @@ plt.savefig('output/convergence.png', dpi=150, bbox_inches=tightness)
 plt.close()
 
 # Calculate electric field using central differences
-print("Calculating electric field...")
+logging.debug("Calculating electric field...")
 E_x = np.zeros((ny+1, nx+1))
 E_y = np.zeros((ny+1, nx+1))
 
@@ -309,7 +310,7 @@ charge_history = [charge_density.copy()]
 velocity_history = [(fluid_velocity_x.copy(), fluid_velocity_y.copy())]
 momentum_history = [(fluid_momentum_x.copy(), fluid_momentum_y.copy())]
 
-print(f"Starting time-stepping simulation ({num_time_steps} steps)...")
+logging.debug(f"Starting time-stepping simulation ({num_time_steps} steps)...")
 start_time = time.time()
 
 # Time-stepping simulation
@@ -319,7 +320,7 @@ for time_step in range(1, num_time_steps + 1):
         progress = time_step / num_time_steps * 100
         elapsed = time.time() - start_time
         eta = (elapsed / time_step) * (num_time_steps - time_step)
-        print(f"Progress: {progress:.1f}%, ETA: {eta:.1f}s")
+        logging.debug(f"Progress: {progress:.1f}%, ETA: {eta:.1f}s")
 
     @numba.njit
     def clip(value, lower, upper):
@@ -459,7 +460,7 @@ for time_step in range(1, num_time_steps + 1):
 
         # Check for invalid values and clean them up
         if has_invalid(new_charge):
-            print("Warning: Invalid charge values detected, cleaning up...")
+            logging.debug("Warning: Invalid charge values detected, cleaning up...")
             # With this Numba-compatible version:
             for j in numba.prange(new_charge.shape[0]):
                 for i in numba.prange(new_charge.shape[1]):
@@ -488,7 +489,7 @@ for time_step in range(1, num_time_steps + 1):
     if time_step in save_times:
         frame_index = save_times.index(time_step)
         current_time = time_step * dt
-        print(f"Saving frame {frame_index} at t = {current_time:.4f} s")
+        logging.debug(f"Saving frame {frame_index} at t = {current_time:.4f} s")
         
         # Save to histories for final processing
         charge_history.append(charge_density.copy())
@@ -569,7 +570,7 @@ for time_step in range(1, num_time_steps + 1):
         plt.savefig(f'{frames_dir}/streamlines/frame_{frame_index:04d}.png', dpi=100, bbox_inches=tightness)
         plt.close(fig)
 
-print(f"Time-stepping completed in {time.time() - start_time:.2f} seconds")
+logging.debug(f"Time-stepping completed in {time.time() - start_time:.2f} seconds")
 
 # Calculate total thrust over time
 def calculate_thrust(momentum_x, momentum_y):
